@@ -49,6 +49,18 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: g_buddy_type
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: g_buddy_name
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: g_splash_ticks
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 interval:
   - interval: 3s
@@ -58,7 +70,12 @@ interval:
             wifi.connected:
           then:
             - http_request.get:
-                url: http://YOUR_SERVER_IP:3003/status
+                url: !lambda |-
+                  char url[80];
+                  snprintf(url, sizeof(url),
+                           "http://YOUR_SERVER_IP:3003/status?device_id=%08X",
+                           (unsigned)ESP.getChipId());
+                  return std::string(url);
                 capture_response: true
                 on_response:
                   then:
@@ -66,8 +83,16 @@ interval:
                         if (response->status_code != 200) return;
                         json::parse_json(body, [](JsonObject root) -> bool {
                           id(g_sessions) = root["sessions"].as<int>();
-                          id(g_running) = root["running"].as<int>();
-                          id(g_tool)    = root["tool_type"].as<int>();
+                          id(g_running)  = root["running"].as<int>();
+                          id(g_tool)     = root["tool_type"].as<int>();
+                          int bt = root["buddy_type"] | -1;
+                          const char* bn = root["buddy_name"] | "";
+                          if (bt >= 0) {
+                            bool first = (id(g_buddy_type) < 0);
+                            id(g_buddy_type) = bt;
+                            if (bn && bn[0]) id(g_buddy_name) = std::string(bn);
+                            if (first) id(g_splash_ticks) = 4;
+                          }
                           return true;
                         });
 
@@ -87,78 +112,289 @@ display:
     lambda: |-
       it.fill(COLOR_OFF);
 
-      const int W = it.get_width();   // 128
-      const int H = it.get_height();  // 64
-      const int CW = W / 2;           // 64
+      const int W = it.get_width();
+      const int H = it.get_height();
+      const int CW = W / 2;
+
+      // ── Boot splash (4s after first hatch) ──
+      if (id(g_splash_ticks) > 0) {
+        static const char* rarities[] = {
+          "Common","Common","Uncommon","Rare","Epic",
+          "Common","Rare","Legendary","Uncommon","Mystical"
+        };
+        static const char* type_names[] = {
+          "BOT","CAT","OWL","GHOST","ALIEN",
+          "BEAR","FOX","DRAGON","BUNNY","CRYSTAL"
+        };
+        int bt = id(g_buddy_type);
+        it.printf(64, 6,  id(font_small),  TextAlign::CENTER, "You hatched a");
+        it.printf(64, 24, id(font_medium), TextAlign::CENTER, "%s!", id(g_buddy_name).c_str());
+        if (bt >= 0 && bt <= 9)
+          it.printf(64, 46, id(font_small), TextAlign::CENTER, "%s %s", rarities[bt], type_names[bt]);
+        id(g_splash_ticks)--;
+        return;
+      }
 
       if (id(g_sessions) > 0) {
         // ── Active: mascot + status panel ──
         static uint8_t frame = 0;
-        frame = (frame + 1) % 8;  // 8s cycle
+        frame = (frame + 1) % 8;
         bool running = id(g_running);
         bool blinking = (frame == 7);
+        int bt = id(g_buddy_type);
+        if (bt < 0 || bt > 9) bt = 0;
 
-        // Head
-        it.circle(32, 33, 22);
+        switch (bt) {
 
-        // Antenna stem + pulsing ball when running
-        it.line(32, 11, 32, 4);
-        if (running && (frame % 2 == 0))
-          it.filled_circle(32, 3, 3);
-        else
-          it.circle(32, 3, 3);
+          case 0: default: {
+            // BOT — round head, antenna, circular eyes
+            it.circle(32, 33, 22);
+            it.line(32, 11, 32, 4);
+            if (running && (frame % 2 == 0)) it.filled_circle(32, 3, 3);
+            else it.circle(32, 3, 3);
+            if (running) { it.line(18,20,23,18); it.line(41,18,46,20); }
+            else         { it.line(19,23,27,23); it.line(37,23,45,23); }
+            if (blinking) {
+              it.line(19,27,27,27); it.line(37,27,45,27);
+            } else if (running) {
+              it.filled_circle(23,27,5); it.filled_circle(25,29,2,COLOR_OFF);
+              it.filled_circle(41,27,5); it.filled_circle(43,29,2,COLOR_OFF);
+            } else {
+              it.filled_circle(23,28,4); it.filled_rectangle(19,24,8,4,COLOR_OFF);
+              it.filled_circle(41,28,4); it.filled_rectangle(37,24,8,4,COLOR_OFF);
+            }
+            if (running) {
+              it.line(20,40,23,43); it.line(23,43,32,45);
+              it.line(32,45,41,43); it.line(41,43,44,40);
+            } else {
+              it.line(24,41,28,43); it.line(28,43,36,43); it.line(36,43,40,41);
+            }
+            if (running && frame % 2 == 0) {
+              it.line(11,18,6,13); it.line(53,18,58,13); it.line(10,49,5,54);
+            }
+            if (!running) {
+              if (frame >= 1) it.printf(46,16,id(font_small),TextAlign::TOP_LEFT,"z");
+              if (frame >= 3) it.printf(51,9, id(font_small),TextAlign::TOP_LEFT,"z");
+              if (frame >= 5) it.printf(56,3, id(font_small),TextAlign::TOP_LEFT,"Z");
+            }
+            break;
+          }
 
-        // Eyebrows
-        if (running) {
-          it.line(18, 20, 23, 18);
-          it.line(41, 18, 46, 20);
-        } else {
-          it.line(19, 23, 27, 23);
-          it.line(37, 23, 45, 23);
-        }
+          case 1: {
+            // CAT — round head, triangular ears, dot eyes, whiskers
+            it.circle(32, 34, 20);
+            it.line(13,18,20,8); it.line(20,8,27,18);
+            it.line(37,18,44,8); it.line(44,8,51,18);
+            if (blinking) {
+              it.line(21,29,28,29); it.line(36,29,43,29);
+            } else if (running) {
+              it.filled_circle(24,29,4); it.filled_circle(25,30,1,COLOR_OFF);
+              it.filled_circle(40,29,4); it.filled_circle(41,30,1,COLOR_OFF);
+            } else {
+              it.filled_circle(24,30,3); it.filled_circle(40,30,3);
+            }
+            it.filled_circle(32,37,1);
+            it.line(14,33,24,35); it.line(14,36,24,36); it.line(14,39,24,37);
+            it.line(40,35,50,33); it.line(40,36,50,36); it.line(40,37,50,39);
+            it.line(29,40,31,42); it.line(31,42,33,40);
+            if (!running) {
+              if (frame >= 2) it.line(48,50,55,45);
+              if (frame >= 4) it.line(55,45,58,38);
+              if (frame >= 6) it.line(58,38,55,33);
+            }
+            break;
+          }
 
-        // Eyes
-        if (blinking) {
-          it.line(19, 27, 27, 27);
-          it.line(37, 27, 45, 27);
-        } else if (running) {
-          // Big open eyes with pupils
-          it.filled_circle(23, 27, 5);
-          it.filled_circle(25, 29, 2, COLOR_OFF);
-          it.filled_circle(41, 27, 5);
-          it.filled_circle(43, 29, 2, COLOR_OFF);
-        } else {
-          // Droopy half-closed eyelids
-          it.filled_circle(23, 28, 4);
-          it.filled_rectangle(19, 24, 8, 4, COLOR_OFF);
-          it.filled_circle(41, 28, 4);
-          it.filled_rectangle(37, 24, 8, 4, COLOR_OFF);
-        }
+          case 2: {
+            // OWL — large filled-circle eyes, tufts, beak
+            it.circle(32, 35, 22);
+            it.line(18,16,22,12); it.line(22,12,26,16);
+            it.line(38,16,42,12); it.line(42,12,46,16);
+            if (blinking) {
+              it.line(17,29,29,29); it.line(35,29,47,29);
+            } else if (running) {
+              it.filled_circle(23,29,7); it.filled_circle(26,32,3,COLOR_OFF);
+              it.filled_circle(41,29,7); it.filled_circle(44,32,3,COLOR_OFF);
+            } else {
+              it.filled_circle(23,30,6); it.filled_circle(25,31,2,COLOR_OFF);
+              it.filled_circle(41,30,6); it.filled_circle(43,31,2,COLOR_OFF);
+            }
+            it.line(29,40,32,44); it.line(32,44,35,40);
+            if (running && frame % 2 == 0) {
+              it.line(10,35,5,28); it.line(54,35,59,28);
+            }
+            break;
+          }
 
-        // Mouth
-        if (running) {
-          it.line(20, 40, 23, 43);
-          it.line(23, 43, 32, 45);
-          it.line(32, 45, 41, 43);
-          it.line(41, 43, 44, 40);
-        } else {
-          it.line(24, 41, 28, 43);
-          it.line(28, 43, 36, 43);
-          it.line(36, 43, 40, 41);
-        }
+          case 3: {
+            // GHOST — rounded top, rectangular body, wavy bottom, outline eyes
+            it.filled_circle(32, 22, 14);
+            it.filled_rectangle(18, 22, 28, 20);
+            int w = running ? (frame % 2) : 0;
+            it.filled_circle(21, 44+w, 5);
+            it.filled_circle(32, 44-w, 5);
+            it.filled_circle(43, 44+w, 5);
+            it.filled_rectangle(18, 44, 28, 6, COLOR_OFF);
+            if (blinking) {
+              it.line(22,27,30,27); it.line(34,27,42,27);
+            } else {
+              it.circle(26, 28, 4); it.circle(38, 28, 4);
+            }
+            if (!running && frame % 2 == 0) {
+              it.filled_circle(32, 20, 14);
+              it.filled_rectangle(18, 20, 28, 20);
+            }
+            break;
+          }
 
-        // Pulsing activity rays when running
-        if (running && frame % 2 == 0) {
-          it.line(11, 18, 6, 13);
-          it.line(53, 18, 58, 13);
-          it.line(10, 49, 5, 54);
-        }
+          case 4: {
+            // ALIEN — wide head, two antennae, almond eyes, V nose
+            it.circle(32, 35, 24);
+            it.line(22,11,18,4); it.filled_circle(18,3,2);
+            it.line(42,11,46,4); it.filled_circle(46,3,2);
+            if (running && frame % 2 == 0) {
+              it.filled_circle(18,3,3); it.filled_circle(46,3,3);
+            }
+            if (blinking) {
+              it.line(18,29,29,29); it.line(35,29,46,29);
+            } else if (running) {
+              it.filled_circle(23,29,5); it.filled_rectangle(18,27,10,4,COLOR_OFF);
+              it.filled_circle(41,29,5); it.filled_rectangle(36,27,10,4,COLOR_OFF);
+            } else {
+              it.filled_circle(23,30,5); it.filled_rectangle(18,28,10,4,COLOR_OFF);
+              it.filled_circle(41,30,5); it.filled_rectangle(36,28,10,4,COLOR_OFF);
+            }
+            it.line(30,38,32,41); it.line(32,41,34,38);
+            if (running) {
+              it.line(22,46,32,49); it.line(32,49,42,46);
+            } else {
+              it.line(26,46,38,46);
+            }
+            break;
+          }
 
-        // Floating Zzz when idle
-        if (!running) {
-          if (frame >= 1) it.printf(46, 16, id(font_small), TextAlign::TOP_LEFT, "z");
-          if (frame >= 3) it.printf(51, 9,  id(font_small), TextAlign::TOP_LEFT, "z");
-          if (frame >= 5) it.printf(56, 3,  id(font_small), TextAlign::TOP_LEFT, "Z");
+          case 5: {
+            // BEAR — round head, circle ears, oval snout, freckles
+            it.circle(32, 35, 20);
+            it.filled_circle(14,18,6); it.filled_circle(50,18,6);
+            if (blinking) {
+              it.line(21,28,28,28); it.line(36,28,43,28);
+            } else if (running) {
+              it.filled_circle(24,28,4); it.filled_circle(25,29,1,COLOR_OFF);
+              it.filled_circle(40,28,4); it.filled_circle(41,29,1,COLOR_OFF);
+            } else {
+              it.filled_circle(24,29,3); it.filled_circle(40,29,3);
+            }
+            it.circle(32, 40, 8);
+            it.filled_circle(21,36,1); it.filled_circle(18,39,1); it.filled_circle(21,42,1);
+            it.filled_circle(43,36,1); it.filled_circle(46,39,1); it.filled_circle(43,42,1);
+            it.line(28,42,31,44); it.line(31,44,33,44); it.line(33,44,36,42);
+            break;
+          }
+
+          case 6: {
+            // FOX — round head, tall pointed ears, narrow eyes, muzzle
+            it.circle(32, 34, 20);
+            it.line(15,18,20,6); it.line(20,6,27,18);
+            it.line(37,18,44,6); it.line(44,6,49,18);
+            if (blinking) {
+              it.line(21,26,28,26); it.line(36,26,43,26);
+            } else if (running) {
+              it.line(21,25,28,25); it.line(21,27,28,27);
+              it.line(36,25,43,25); it.line(36,27,43,27);
+            } else {
+              it.line(21,26,28,26); it.line(21,27,25,27);
+              it.line(36,26,43,26); it.line(39,27,43,27);
+            }
+            it.filled_rectangle(24,36,16,10);
+            it.filled_rectangle(25,37,14,8,COLOR_OFF);
+            it.filled_circle(32,38,2);
+            if (running) {
+              it.line(26,44,29,46); it.line(29,46,35,47);
+              it.line(35,47,38,46); it.line(38,46,41,44);
+            } else {
+              it.line(28,44,32,46); it.line(32,46,36,44);
+            }
+            if (!running && frame >= 3) {
+              it.line(50,48,56,42);
+              if (frame >= 5) it.line(56,42,58,36);
+            }
+            break;
+          }
+
+          case 7: {
+            // DRAGON — rectangular head, horns, slit pupils, scales, fire breath
+            it.line(12,16,52,16); it.line(52,16,52,46);
+            it.line(52,46,12,46); it.line(12,46,12,16);
+            it.line(12,16,6,8); it.line(52,16,58,8);
+            it.line(24,18,32,22); it.line(32,22,40,18);
+            if (blinking) {
+              it.line(16,29,27,29); it.line(37,29,48,29);
+            } else if (running) {
+              it.filled_circle(21,29,5); it.line(21,24,21,34);
+              it.filled_circle(43,29,5); it.line(43,24,43,34);
+            } else {
+              it.filled_circle(21,30,4); it.line(21,26,21,34);
+              it.filled_circle(43,30,4); it.line(43,26,43,34);
+            }
+            it.filled_circle(28,40,1); it.filled_circle(36,40,1);
+            if (running) {
+              it.line(14,44,18,42); it.line(18,42,22,46); it.line(22,46,26,42);
+              it.line(26,42,32,46); it.line(32,46,38,42); it.line(38,42,42,46); it.line(42,46,50,44);
+            } else {
+              it.line(14,44,50,44);
+            }
+            if (running && frame % 2 == 0) {
+              it.line(14,46,8,52); it.line(8,52,6,58);
+              it.line(18,47,14,56);
+            }
+            break;
+          }
+
+          case 8: {
+            // BUNNY — small head, tall thin ears, buck teeth
+            it.circle(32, 38, 16);
+            it.line(25,22,25,5); it.line(27,22,27,5); it.line(25,5,27,5);
+            it.line(37,22,37,5); it.line(39,22,39,5); it.line(37,5,39,5);
+            if (running && frame % 2 == 0) {
+              it.line(25,5,23,3); it.line(39,5,41,3);
+            }
+            if (blinking) {
+              it.line(24,32,30,32); it.line(34,32,40,32);
+            } else if (running) {
+              it.filled_circle(26,32,3); it.filled_circle(27,33,1,COLOR_OFF);
+              it.filled_circle(38,32,3); it.filled_circle(39,33,1,COLOR_OFF);
+            } else {
+              it.filled_circle(26,33,3); it.filled_circle(38,33,3);
+            }
+            it.filled_circle(32,37,1);
+            it.line(29,40,32,42); it.line(32,42,35,40);
+            it.filled_rectangle(29,42,4,4);
+            it.filled_rectangle(34,42,4,4);
+            it.line(33,42,33,46);
+            break;
+          }
+
+          case 9: {
+            // CRYSTAL — hexagonal gem, facet lines, eyes inside
+            it.line(32,8, 52,20); it.line(52,20,52,44);
+            it.line(52,44,32,56); it.line(32,56,12,44);
+            it.line(12,44,12,20); it.line(12,20,32,8);
+            it.line(32,8, 32,32); it.line(52,20,32,32);
+            it.line(52,44,32,32); it.line(32,56,32,32);
+            if (running && frame % 2 == 0) {
+              it.line(12,20,32,32); it.line(12,44,32,32);
+            }
+            if (blinking) {
+              it.line(24,30,29,30); it.line(35,30,40,30);
+            } else {
+              it.filled_circle(26,31,3); it.filled_circle(38,31,3);
+              if (running) {
+                it.filled_circle(27,32,1,COLOR_OFF); it.filled_circle(39,32,1,COLOR_OFF);
+              }
+            }
+            break;
+          }
         }
 
         // Vertical divider
@@ -167,8 +403,7 @@ display:
         // Status panel (right half, centre x=96)
         static const char* spin[4] = {"|", "/", "-", "\\"};
         static const char* dots[4] = {" ", ".", "..", "..."};
-        // tool_type: 0=RUN 1=BASH 2=FILE 3=WEB 4=AGNT 5=PLAN
-        static const char* tool_labels[6] = {"RUN", "BASH", "FILE", "WEB", "AGNT", "PLAN"};
+        static const char* tool_labels[6] = {"RUN","BASH","FILE","WEB","AGNT","PLAN"};
         uint8_t af = frame % 4;
 
         it.printf(96, 3,  id(font_small),  TextAlign::CENTER, "CLAUDE");
