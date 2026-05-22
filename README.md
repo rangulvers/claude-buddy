@@ -1,6 +1,6 @@
 # Claude Buddy
 
-A tiny status display for your desk that shows what Claude Code is doing — built on a D1 Mini (ESP8266) with a 128×64 OLED. Idle shows your home energy data. When Claude is active, the screen switches to a full-screen mascot that reacts in real time.
+A tiny status display for your desk that shows what Claude Code is doing — built on a D1 Mini (ESP8266) with a 128×64 OLED. When Claude is active, a mascot takes over the screen and reacts in real time. When idle, a standby screen is shown.
 
 ```
 Active / Running                 Active / Idle
@@ -138,7 +138,7 @@ Hardware: **D1 Mini (ESP8266)** + **SSD1306 128×64 OLED** (I2C, SDA=D2, SCL=D1)
 
 **Active Claude session** — full-screen mascot:
 - Left half: animated robot face
-  - Running: raised eyebrows, open eyes with pupils, wide smile, pulsing antenna, energy rays
+  - Running: raised eyebrows, open eyes with pupils, wide smile, pulsing antenna, activity rays
   - Idle: droopy eyebrows, half-closed eyes, small smile, floating Zzz
   - Blinks every 8 seconds regardless of state
 - Right half: session count + RUN/IDL status with spinner animation
@@ -170,7 +170,7 @@ Running state              Idle state
   /|\                         |
  (◉ ◉)  ← pupils          (-_-)  ← droopy lids + flat brows
   \U/   ← wide smile        \~/   ← small smile
-╱    ╲  ← energy rays    z z Z    ← floating Zzz
+╱    ╲  ← activity rays    z z Z    ← floating Zzz
 ```
 
 Primitives used: `circle`, `filled_circle`, `filled_rectangle`, `line`, `printf`

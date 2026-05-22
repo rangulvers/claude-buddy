@@ -142,7 +142,7 @@ display:
           it.line(36, 43, 40, 41);
         }
 
-        // Pulsing energy rays when running
+        // Pulsing activity rays when running
         if (running && frame % 2 == 0) {
           it.line(11, 18, 6, 13);
           it.line(53, 18, 58, 13);
