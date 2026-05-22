@@ -21,6 +21,20 @@ No active sessions
 └───────────────────────────┘
 ```
 
+## Install
+
+Clone the repo, open it in Claude Code, and say **"install this repo"** — Claude reads `CLAUDE.md` and runs every step automatically:
+
+- Creates a Python venv and installs server dependencies
+- Writes and enables a systemd user service (port 3003)
+- Copies the hook script to `~/.local/bin/`
+- Merges the three hooks into `~/.claude/settings.json`
+- Verifies everything is working
+
+Manual step: flash the ESPHome YAML to your D1 Mini (Claude will tell you exactly what to edit and how to wire it).
+
+---
+
 ## Hardware
 
 | Part | Spec |
