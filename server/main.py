@@ -16,6 +16,7 @@ BUDDIES_FILE.parent.mkdir(exist_ok=True)
 
 STALE_AFTER  = 300
 ADMIN_TOKEN  = os.environ.get("BUDDY_ADMIN_TOKEN", "buddy-admin-changeme")
+TOKENS_PER_LEVEL = 50_000
 
 BUDDY_TYPES    = ["BOT","CAT","OWL","GHOST","ALIEN","BEAR","FOX","DRAGON","BUNNY","CRYSTAL"]
 BUDDY_RARITIES = ["Common","Common","Uncommon","Rare","Epic","Common","Rare","Legendary","Uncommon","Mystical"]
@@ -32,7 +33,6 @@ BUDDY_NAMES    = {
     9: ["Array","Core","Facet","Grid","Index","Lattice","Matrix","Node","Prism","Vector"],
 }
 
-# Weighted spawn pool (cumulative out of 1000)
 SPAWN_WEIGHTS = [
     (0, 200),   # BOT      Common    20%
     (1, 370),   # CAT      Common    17%
@@ -61,7 +61,8 @@ security = HTTPBearer()
 _default = {
     "sessions": 0, "running": 0, "waiting": 0, "msg": "Idle",
     "tool": "", "tool_type": 0,
-    "buddy_type": 0, "buddy_name": "Bolt", "buddy_rarity": "Common",
+    "buddy_type": 0, "buddy_name": "", "buddy_rarity": "",
+    "buddy_level": 1, "buddy_tokens": 0, "levelup": False,
     "tokens_today": 0, "ts": 0,
 }
 
@@ -87,20 +88,46 @@ def roll_buddy() -> tuple[int, str]:
     return 9, random.choice(BUDDY_NAMES[9])
 
 
-def get_or_assign(device_id: str) -> dict:
+def get_or_assign(device_id: str, tokens_today: int = 0) -> tuple[dict, bool]:
     buddies = load_buddies()
     if device_id not in buddies:
         type_id, name = roll_buddy()
         buddies[device_id] = {
-            "type":      type_id,
-            "name":      name,
-            "type_name": BUDDY_TYPES[type_id],
-            "rarity":    BUDDY_RARITIES[type_id],
-            "assigned_at": int(time.time()),
+            "type":           type_id,
+            "name":           name,
+            "type_name":      BUDDY_TYPES[type_id],
+            "rarity":         BUDDY_RARITIES[type_id],
+            "assigned_at":    int(time.time()),
+            "tokens_total":   0,
+            "tokens_last":    0,
+            "level":          1,
+            "level_notified": 1,
         }
-    buddies[device_id]["last_seen"] = int(time.time())
+
+    buddy = buddies[device_id]
+
+    # Accumulate token delta (handles daily reset: tokens_today < tokens_last)
+    last  = buddy.get("tokens_last", 0)
+    total = buddy.get("tokens_total", 0)
+    if tokens_today >= last:
+        total += tokens_today - last
+    else:
+        total += tokens_today
+    buddy["tokens_total"] = total
+    buddy["tokens_last"]  = tokens_today
+
+    # Level progression
+    new_level     = total // TOKENS_PER_LEVEL + 1
+    old_notified  = buddy.get("level_notified", 1)
+    levelup       = new_level > old_notified
+    buddy["level"] = new_level
+    if levelup:
+        buddy["level_notified"] = new_level
+
+    buddy["last_seen"] = int(time.time())
+    buddies[device_id] = buddy
     save_buddies(buddies)
-    return buddies[device_id]
+    return buddy, levelup
 
 
 def require_admin(creds: HTTPAuthorizationCredentials = Depends(security)):
@@ -110,12 +137,16 @@ def require_admin(creds: HTTPAuthorizationCredentials = Depends(security)):
 
 @app.get("/status")
 def status(device_id: str = ""):
-    buddy = get_or_assign(device_id) if device_id else None
-
     try:
         data = json.loads(STATUS_FILE.read_text()) if STATUS_FILE.exists() else dict(_default)
     except Exception:
         data = dict(_default)
+
+    tokens_today = data.get("tokens_today", 0)
+
+    buddy, levelup = None, False
+    if device_id:
+        buddy, levelup = get_or_assign(device_id, tokens_today)
 
     if time.time() - data.get("ts", 0) > STALE_AFTER and data.get("running"):
         data["running"] = 0
@@ -129,10 +160,16 @@ def status(device_id: str = ""):
         data["buddy_type"]   = buddy["type"]
         data["buddy_name"]   = buddy["name"]
         data["buddy_rarity"] = buddy["rarity"]
+        data["buddy_level"]  = buddy["level"]
+        data["buddy_tokens"] = buddy["tokens_total"]
+        data["levelup"]      = levelup
     else:
         data.setdefault("buddy_type",   0)
         data.setdefault("buddy_name",   "")
         data.setdefault("buddy_rarity", "")
+        data.setdefault("buddy_level",  1)
+        data.setdefault("buddy_tokens", 0)
+        data.setdefault("levelup",      False)
 
     return JSONResponse(data)
 
@@ -150,12 +187,16 @@ def admin_assign(req: AssignRequest):
     buddies = load_buddies()
     prev = buddies.get(req.device_id, {})
     buddies[req.device_id] = {
-        "type":          req.buddy_type,
-        "name":          req.buddy_name,
-        "type_name":     BUDDY_TYPES[req.buddy_type],
-        "rarity":        BUDDY_RARITIES[req.buddy_type],
-        "assigned_at":   int(time.time()),
-        "last_seen":     prev.get("last_seen", 0),
+        "type":           req.buddy_type,
+        "name":           req.buddy_name,
+        "type_name":      BUDDY_TYPES[req.buddy_type],
+        "rarity":         BUDDY_RARITIES[req.buddy_type],
+        "assigned_at":    int(time.time()),
+        "last_seen":      prev.get("last_seen", 0),
+        "tokens_total":   prev.get("tokens_total", 0),
+        "tokens_last":    prev.get("tokens_last", 0),
+        "level":          prev.get("level", 1),
+        "level_notified": prev.get("level_notified", 1),
         "admin_assigned": True,
     }
     save_buddies(buddies)

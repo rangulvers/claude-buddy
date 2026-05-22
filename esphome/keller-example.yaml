@@ -61,6 +61,18 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: g_buddy_level
+    type: int
+    restore_value: no
+    initial_value: '1'
+  - id: g_buddy_tokens
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: g_levelup_ticks
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 interval:
   - interval: 3s
@@ -93,6 +105,10 @@ interval:
                             if (bn && bn[0]) id(g_buddy_name) = std::string(bn);
                             if (first) id(g_splash_ticks) = 4;
                           }
+                          id(g_buddy_level)  = root["buddy_level"] | 1;
+                          id(g_buddy_tokens) = root["buddy_tokens"] | 0;
+                          bool lu = root["levelup"] | false;
+                          if (lu && id(g_levelup_ticks) == 0) id(g_levelup_ticks) = 4;
                           return true;
                         });
 
@@ -115,6 +131,17 @@ display:
       const int W = it.get_width();
       const int H = it.get_height();
       const int CW = W / 2;
+
+      // ── Level-up splash (4s, shown once per level) ──
+      if (id(g_levelup_ticks) > 0) {
+        it.printf(64, 8,  id(font_small),  TextAlign::CENTER, "LEVEL UP!");
+        char lv_str[8];
+        snprintf(lv_str, sizeof(lv_str), "LV %d", id(g_buddy_level));
+        it.printf(64, 26, id(font_medium), TextAlign::CENTER, "%s", lv_str);
+        it.printf(64, 46, id(font_small),  TextAlign::CENTER, "%s", id(g_buddy_name).c_str());
+        id(g_levelup_ticks)--;
+        return;
+      }
 
       // ── Boot splash (4s after first hatch) ──
       if (id(g_splash_ticks) > 0) {
@@ -409,12 +436,22 @@ display:
         it.printf(96, 3,  id(font_small),  TextAlign::CENTER, "CLAUDE");
         it.line(66, 15, 126, 15);
 
+        // Big session count
         char sess_str[4];
         snprintf(sess_str, sizeof(sess_str), "%d", id(g_sessions));
-        it.printf(96, 18, id(font_medium), TextAlign::CENTER, "%s", sess_str);
-        it.printf(96, 37, id(font_small),  TextAlign::CENTER,
-                  id(g_sessions) == 1 ? "session" : "sessions");
+        it.printf(96, 23, id(font_medium), TextAlign::CENTER, "%s", sess_str);
 
+        // Level label + token progress bar
+        char lv_str[8];
+        snprintf(lv_str, sizeof(lv_str), "LV%d", id(g_buddy_level));
+        it.printf(68, 34, id(font_small), TextAlign::LEFT, "%s", lv_str);
+        int tkn    = id(g_buddy_tokens) % 50000;
+        int filled = (int)((long)tkn * 32 / 50000);
+        it.line(92,34,124,34); it.line(92,42,124,42);
+        it.line(92,34,92,42);  it.line(124,34,124,42);
+        if (filled > 0) it.filled_rectangle(93, 35, filled, 6);
+
+        // Tool status
         char anim[12];
         if (running) {
           int t = id(g_tool);
