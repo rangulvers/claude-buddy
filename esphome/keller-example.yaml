@@ -1,0 +1,250 @@
+esphome:
+  name: keller-test
+  friendly_name: House Energy Display
+
+esp8266:
+  board: d1_mini
+
+logger:
+
+api:
+  encryption:
+    key: !secret esphome_api_key
+
+ota:
+  - platform: esphome
+    password: !secret esphome_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid  # set in secrets.yaml
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "Plant_Monitor_HotSpot"
+    password: !secret esphome_ap_password
+
+captive_portal:
+
+i2c:
+  sda: D2
+  scl: D1
+  scan: false
+  frequency: 400kHz
+
+http_request:
+  useragent: esphome/buddy
+  timeout: 2s
+  verify_ssl: false
+
+globals:
+  - id: g_sessions
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: g_running
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+interval:
+  - interval: 3s
+    then:
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - http_request.get:
+                url: http://YOUR_SERVER_IP:3003/status
+                capture_response: true
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code != 200) return;
+                        json::parse_json(body, [](JsonObject root) -> bool {
+                          id(g_sessions) = root["sessions"].as<int>();
+                          id(g_running) = root["running"].as<int>();
+                          return true;
+                        });
+
+sensor:
+  - platform: homeassistant
+    id: solar_power
+    entity_id: sensor.inverter_input_power
+
+  - platform: homeassistant
+    id: house_power
+    entity_id: sensor.house_consumption_power
+
+  - platform: homeassistant
+    id: grid_power_signed
+    entity_id: sensor.power_meter_active_power
+
+  - platform: homeassistant
+    id: battery_soc
+    entity_id: sensor.battery_state_of_capacity
+
+font:
+  - file: "fonts/PixelOperator.ttf"
+    id: font_medium
+    size: 16
+  - file: "fonts/PixelOperator.ttf"
+    id: font_small
+    size: 11
+
+display:
+  - platform: ssd1306_i2c
+    update_interval: 1s
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      it.fill(COLOR_OFF);
+
+      const int W = it.get_width();   // 128
+      const int H = it.get_height();  // 64
+      const int CW = W / 2;           // 64
+      const int CH = H / 2;           // 32
+
+      if (id(g_sessions) > 0) {
+        // ── Full-screen Claude mode ──
+        static uint8_t frame = 0;
+        frame = (frame + 1) % 8;  // 8s cycle
+        bool running = id(g_running);
+        bool blinking = (frame == 7);
+
+        // Head
+        it.circle(32, 33, 22);
+
+        // Antenna stem + pulsing ball when running
+        it.line(32, 11, 32, 4);
+        if (running && (frame % 2 == 0))
+          it.filled_circle(32, 3, 3);
+        else
+          it.circle(32, 3, 3);
+
+        // Eyebrows
+        if (running) {
+          // Raised/arched — alert
+          it.line(18, 20, 23, 18);
+          it.line(41, 18, 46, 20);
+        } else {
+          // Flat droopy — sleepy
+          it.line(19, 23, 27, 23);
+          it.line(37, 23, 45, 23);
+        }
+
+        // Eyes
+        if (blinking) {
+          it.line(19, 27, 27, 27);
+          it.line(37, 27, 45, 27);
+        } else if (running) {
+          // Big eyes with pupils
+          it.filled_circle(23, 27, 5);
+          it.filled_circle(25, 29, 2, COLOR_OFF);
+          it.filled_circle(41, 27, 5);
+          it.filled_circle(43, 29, 2, COLOR_OFF);
+        } else {
+          // Droopy half-closed eyelids
+          it.filled_circle(23, 28, 4);
+          it.filled_rectangle(19, 24, 8, 4, COLOR_OFF);
+          it.filled_circle(41, 28, 4);
+          it.filled_rectangle(37, 24, 8, 4, COLOR_OFF);
+        }
+
+        // Mouth
+        if (running) {
+          it.line(20, 40, 23, 43);
+          it.line(23, 43, 32, 45);
+          it.line(32, 45, 41, 43);
+          it.line(41, 43, 44, 40);
+        } else {
+          // Small resting smile
+          it.line(24, 41, 28, 43);
+          it.line(28, 43, 36, 43);
+          it.line(36, 43, 40, 41);
+        }
+
+        // Energy rays when running (pulse on even frames)
+        if (running && frame % 2 == 0) {
+          it.line(11, 18, 6, 13);
+          it.line(53, 18, 58, 13);
+          it.line(10, 49, 5, 54);
+        }
+
+        // Floating Zzz when idle
+        if (!running) {
+          if (frame >= 1) it.printf(46, 16, id(font_small), TextAlign::TOP_LEFT, "z");
+          if (frame >= 3) it.printf(51, 9,  id(font_small), TextAlign::TOP_LEFT, "z");
+          if (frame >= 5) it.printf(56, 3,  id(font_small), TextAlign::TOP_LEFT, "Z");
+        }
+
+        // Vertical divider
+        it.line(CW, 0, CW, H);
+
+        // Status panel (right half, centre x=96)
+        static const char* spin[4] = {"|", "/", "-", "\\"};
+        static const char* dots[4] = {" ", ".", "..", "..."};
+        uint8_t af = frame % 4;
+
+        it.printf(96, 3,  id(font_small),  TextAlign::CENTER, "CLAUDE");
+        it.line(66, 15, 126, 15);
+
+        char sess_str[4];
+        snprintf(sess_str, sizeof(sess_str), "%d", id(g_sessions));
+        it.printf(96, 18, id(font_medium), TextAlign::CENTER, "%s", sess_str);
+        it.printf(96, 37, id(font_small),  TextAlign::CENTER,
+                  id(g_sessions) == 1 ? "session" : "sessions");
+
+        char anim[10];
+        if (running) {
+          snprintf(anim, sizeof(anim), "RUN %s", spin[af]);
+        } else {
+          snprintf(anim, sizeof(anim), "IDL %s", dots[af]);
+        }
+        it.printf(96, 51, id(font_small), TextAlign::CENTER, "%s", anim);
+
+      } else {
+        // ── Energy display (4 cells) ──
+
+        auto fmt_watts = [&](float w, char* buf, size_t n){
+          if (isnan(w)) { snprintf(buf, n, "--"); return; }
+          if (fabsf(w) >= 1000.0f) snprintf(buf, n, "%.1fk", w/1000.0f);
+          else snprintf(buf, n, "%.0f", w);
+        };
+        auto fmt_pct = [&](float p, char* buf, size_t n){
+          if (isnan(p)) { snprintf(buf, n, "--"); return; }
+          p = p < 0 ? 0 : (p > 100 ? 100 : p);
+          snprintf(buf, n, "%.0f%%", p);
+        };
+        auto draw_cell = [&](int col, int row, const char* label, const char* value){
+          int x0 = col * CW;
+          int y0 = row * CH;
+          it.printf(x0 + 2, y0 + 1, id(font_small), TextAlign::TOP_LEFT, "%s", label);
+          it.printf(x0 + CW/2, y0 + CH/2 + 4, id(font_medium), TextAlign::CENTER, "%s", value);
+        };
+
+        float solar = id(solar_power).state;
+        float house = id(house_power).state;
+        float grid_s = id(grid_power_signed).state;
+        float soc   = id(battery_soc).state;
+
+        char v1[12], v2[12], v3[16], v4[12];
+        fmt_watts(solar, v1, sizeof(v1));
+        fmt_watts(house, v2, sizeof(v2));
+
+        if (isnan(grid_s)) {
+          snprintf(v3, sizeof(v3), "--");
+        } else {
+          bool importing = (grid_s < 0.0f);
+          float mag = fabsf(grid_s);
+          char pwr[10];
+          fmt_watts(mag, pwr, sizeof(pwr));
+          snprintf(v3, sizeof(v3), "%s %s", importing ? ">" : "<", pwr);
+        }
+
+        fmt_pct(soc, v4, sizeof(v4));
+
+        draw_cell(0, 0, "Solar", v1);
+        draw_cell(1, 0, "House", v2);
+        draw_cell(0, 1, "Grid",  v3);
+        draw_cell(1, 1, "Batt",  v4);
+      }
