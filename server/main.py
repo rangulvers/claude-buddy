@@ -24,7 +24,7 @@ BUDDIES_FILE.parent.mkdir(exist_ok=True)
 
 STALE_AFTER  = 300
 ADMIN_TOKEN  = os.environ.get("BUDDY_ADMIN_TOKEN", "buddy-admin-changeme")
-TOKENS_BASE = 50_000
+TOKENS_BASE = 1_000
 
 # Warn operators who are running with the default insecure token.
 if ADMIN_TOKEN == "buddy-admin-changeme":
@@ -155,17 +155,16 @@ def roll_buddy() -> tuple[int, str]:
 
 
 def _compute_level(tokens_total: int) -> int:
-    """Triangular progression: LV N→N+1 costs TOKENS_BASE × N tokens.
-    Total to reach level N = TOKENS_BASE × (N-1) × N / 2."""
+    """Exponential ×2 progression: LV N→N+1 costs TOKENS_BASE × 2^(N-1).
+    Total to reach level N = TOKENS_BASE × (2^(N-1) - 1)."""
     if tokens_total <= 0:
         return 1
-    n = (1.0 + math.sqrt(1.0 + 8.0 * tokens_total / TOKENS_BASE)) / 2.0
-    return max(1, int(n))
+    return max(1, int(math.log2(tokens_total / TOKENS_BASE + 1)) + 1)
 
 
 def _tokens_for_level(level: int) -> int:
     """Total tokens required to reach `level` (cumulative threshold)."""
-    return TOKENS_BASE * (level - 1) * level // 2
+    return TOKENS_BASE * (2 ** (level - 1) - 1)
 
 
 def _sanitise_tokens_today(raw) -> int:
@@ -209,7 +208,7 @@ def get_or_assign(device_id: str, tokens_today: int = 0) -> tuple[dict, bool]:
     buddy["tokens_total"] = total
     buddy["tokens_last"]  = tokens_today
 
-    # Level progression (triangular: LV N→N+1 costs TOKENS_BASE × N)
+    # Level progression (exponential ×2: LV N→N+1 costs TOKENS_BASE × 2^(N-1))
     new_level     = _compute_level(total)
     old_notified  = buddy.get("level_notified", 1)
     levelup       = new_level > old_notified
@@ -252,7 +251,7 @@ def status(device_id: str = ""):
 
     if buddy:
         lvl       = buddy["level"]
-        cost      = TOKENS_BASE * lvl
+        cost      = TOKENS_BASE * (2 ** (lvl - 1))
         in_level  = buddy["tokens_total"] - _tokens_for_level(lvl)
         level_pct = min(100, max(0, int(in_level * 100 / cost))) if cost > 0 else 0
         data["buddy_type"]      = buddy["type"]
