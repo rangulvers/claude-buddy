@@ -1,6 +1,7 @@
 import fcntl
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -23,7 +24,7 @@ BUDDIES_FILE.parent.mkdir(exist_ok=True)
 
 STALE_AFTER  = 300
 ADMIN_TOKEN  = os.environ.get("BUDDY_ADMIN_TOKEN", "buddy-admin-changeme")
-TOKENS_PER_LEVEL = 50_000
+TOKENS_BASE = 50_000
 
 # Warn operators who are running with the default insecure token.
 if ADMIN_TOKEN == "buddy-admin-changeme":
@@ -153,6 +154,20 @@ def roll_buddy() -> tuple[int, str]:
     return 9, random.choice(BUDDY_NAMES[9])
 
 
+def _compute_level(tokens_total: int) -> int:
+    """Triangular progression: LV N→N+1 costs TOKENS_BASE × N tokens.
+    Total to reach level N = TOKENS_BASE × (N-1) × N / 2."""
+    if tokens_total <= 0:
+        return 1
+    n = (1.0 + math.sqrt(1.0 + 8.0 * tokens_total / TOKENS_BASE)) / 2.0
+    return max(1, int(n))
+
+
+def _tokens_for_level(level: int) -> int:
+    """Total tokens required to reach `level` (cumulative threshold)."""
+    return TOKENS_BASE * (level - 1) * level // 2
+
+
 def _sanitise_tokens_today(raw) -> int:
     """Return a non-negative integer from whatever tokens_today the status file
     contains.  Rejects floats, strings, negatives, and None."""
@@ -194,8 +209,8 @@ def get_or_assign(device_id: str, tokens_today: int = 0) -> tuple[dict, bool]:
     buddy["tokens_total"] = total
     buddy["tokens_last"]  = tokens_today
 
-    # Level progression
-    new_level     = total // TOKENS_PER_LEVEL + 1
+    # Level progression (triangular: LV N→N+1 costs TOKENS_BASE × N)
+    new_level     = _compute_level(total)
     old_notified  = buddy.get("level_notified", 1)
     levelup       = new_level > old_notified
     buddy["level"] = new_level
@@ -236,12 +251,17 @@ def status(device_id: str = ""):
     data["tool_type"] = TOOL_TYPES.get(tool, 0) if data.get("running") else 0
 
     if buddy:
-        data["buddy_type"]   = buddy["type"]
-        data["buddy_name"]   = buddy["name"]
-        data["buddy_rarity"] = buddy["rarity"]
-        data["buddy_level"]  = buddy["level"]
-        data["buddy_tokens"] = buddy["tokens_total"]
-        data["levelup"]      = levelup
+        lvl       = buddy["level"]
+        cost      = TOKENS_BASE * lvl
+        in_level  = buddy["tokens_total"] - _tokens_for_level(lvl)
+        level_pct = min(100, max(0, int(in_level * 100 / cost))) if cost > 0 else 0
+        data["buddy_type"]      = buddy["type"]
+        data["buddy_name"]      = buddy["name"]
+        data["buddy_rarity"]    = buddy["rarity"]
+        data["buddy_level"]     = lvl
+        data["buddy_level_pct"] = level_pct
+        data["buddy_tokens"]    = buddy["tokens_total"]
+        data["levelup"]         = levelup
     else:
         data.setdefault("buddy_type",   0)
         data.setdefault("buddy_name",   "")
