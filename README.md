@@ -21,6 +21,28 @@ No active sessions
 └───────────────────────────┘
 ```
 
+## Hardware
+
+| Part | Spec |
+|------|------|
+| Microcontroller | Wemos D1 Mini (ESP8266, CH340 USB chip) |
+| Display | 0.96" SSD1306 OLED, 128×64px, I2C, 3.3V |
+
+### Wiring
+
+```
+D1 Mini        SSD1306 OLED
+─────────      ────────────
+3V3       ──►  VCC
+GND       ──►  GND
+D1 (GPIO5)──►  SCL
+D2 (GPIO4)──►  SDA
+```
+
+Both parts are available on AliExpress / Amazon for a few euros each. No resistors or other components needed — the OLED has onboard pull-ups.
+
+---
+
 ## How it works
 
 ```
@@ -50,26 +72,43 @@ Three components:
 
 ## Status server
 
-Minimal FastAPI app. Reads `/tmp/claude-status.json` and serves it at `GET /status`.
-
-```json
-{
-  "sessions": 1,
-  "running": 1,
-  "waiting": 0,
-  "msg": "Read",
-  "tokens_today": 0,
-  "ts": 1748000000
-}
-```
-
-Status older than 5 minutes is treated as idle (catches the case where Claude exits without firing the Stop hook).
+FastAPI app on port 3003. Reads `/tmp/claude-status.json` and serves it at `GET /status`.
 
 ```bash
 cd server
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 3003
 ```
+
+### Buddy hatch system
+
+First time a device connects (via `?device_id=<chip_hex>`), the server rolls a random buddy and stores it permanently in `~/.claude-buddy/buddies.json`. Same device always gets the same buddy. 10 types, 6 rarity tiers:
+
+| Rarity | Types | Chance |
+|--------|-------|--------|
+| Common | BOT, CAT, BEAR | 50% |
+| Uncommon | BUNNY, OWL | 25% |
+| Rare | FOX, GHOST | 15% |
+| Epic | ALIEN | 3% |
+| Legendary | DRAGON | 2% |
+| Mystical | CRYSTAL | 0.5% |
+
+`GET /status?device_id=AABBCCDD` returns `buddy_type`, `buddy_name`, `buddy_rarity` alongside the Claude status fields.
+
+Admin endpoints (require `Authorization: Bearer <BUDDY_ADMIN_TOKEN>`):
+
+```bash
+# Force-assign a specific buddy
+POST /admin/assign
+{"device_id": "AABBCCDD", "buddy_type": 9, "buddy_name": "Prism"}
+
+# List all devices and their buddies
+GET /admin/buddies
+```
+
+Set `BUDDY_ADMIN_TOKEN` env var (defaults to `buddy-admin-changeme` — change it).
+
+Status older than 5 minutes is treated as idle (catches the case where Claude exits without firing the Stop hook).
 
 ---
 
@@ -120,9 +159,9 @@ Hardware: **D1 Mini (ESP8266)** + **SSD1306 128×64 OLED** (I2C, SDA=D2, SCL=D1)
 
 `esphome/keller-example.yaml` — adapt to your setup:
 
-- Replace `http://YOUR_SERVER_IP:3003/status` with your status server address
-- Replace the four `homeassistant` sensor entity IDs with your own (or remove them if you don't use HA)
+- Replace `YOUR_SERVER_IP` with your status server address
 - Set your WiFi credentials in ESPHome secrets
+- The chip ID is read automatically (`ESP.getChipId()`) — no manual device ID needed
 
 ### Display modes
 
@@ -162,22 +201,43 @@ OTA via ESPHome dashboard (once WiFi is working), or serial:
 
 ## Mascot design
 
-Face drawn entirely with ESPHome display primitives on 64×64 pixels (left half of 128×64 screen):
+Each device hatches one of 10 buddy types, drawn entirely with ESPHome display primitives on the left 64×64 pixels. All types share running / idle / blink states.
 
 ```
-Running state              Idle state
-   o*                         o
-  /|\                         |
- (◉ ◉)  ← pupils          (-_-)  ← droopy lids + flat brows
-  \U/   ← wide smile        \~/   ← small smile
-╱    ╲  ← activity rays    z z Z    ← floating Zzz
+# BOT (Common)          # CAT (Common)          # OWL (Uncommon)
+    o*                    /\ /\                    /\_/\
+   /|\                  (o . o)                  (O) (O)
+  (◉ ◉)                  ~ ~ ~                     ^
+   \U/                     w                     )   (
+
+# GHOST (Rare)          # ALIEN (Epic)           # BEAR (Common)
+  _____                 () ()                     (.) (.)
+ /     \               /  _  \                   /     \
+| o   o |             | (o o) |                 | . . . |
+|       |             |   v   |                 | (U)   |
+ \_/\_/               \_____/                    \_____/
+
+# FOX (Rare)            # DRAGON (Legendary)     # BUNNY (Uncommon)
+  /\ /\                  /  /                      | |
+ (^   ^)               /____\                      \_/
+  ---                 |= o o=|                    (^ ^)
+ ( w )                |  ~~~  |                    w
+
+# CRYSTAL (Mystical)
+     /\
+    /  \
+   | ◆  |
+    \  /
+     \/
+   (o o)
 ```
 
-Primitives used: `circle`, `filled_circle`, `filled_rectangle`, `line`, `printf`
+All drawing uses: `circle`, `filled_circle`, `filled_rectangle`, `line`, `printf`
 
-Animation driven by an 8-step frame counter (1s per step at `update_interval: 1s`):
+Animation: 8-step frame counter (1s per tick at `update_interval: 1s`):
 - Blink at frame 7 (every 8 seconds)
-- Antenna pulse every even frame when running
-- Energy rays every even frame when running
-- Zzz appear progressively: z at frame≥1, second z at frame≥3, Z at frame≥5 when idle
-- Spinner/dots on right panel cycle through frame % 4
+- Running: raised eyebrows/alert eyes, pulsing details every even frame
+- Idle: droopy eyes, floating Zzz (BOT), swaying tail (CAT, FOX), ear wiggle (BUNNY), bobbing (GHOST)
+- DRAGON: fire breath lines when running on even frames
+- CRYSTAL: sparkle facet lines pulse when running
+- Spinner/dots on right panel cycle through `frame % 4`
