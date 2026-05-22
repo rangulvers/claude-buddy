@@ -3,7 +3,7 @@
 A tiny status display for your desk that shows what Claude Code is doing — built on a D1 Mini (ESP8266) with a 128×64 OLED. Idle shows your home energy data. When Claude is active, the screen switches to a full-screen mascot that reacts in real time.
 
 ```
-Running                          Idle
+Active / Running                 Active / Idle
 ┌───────────────────────────┐    ┌───────────────────────────┐
 │    o*        │  CLAUDE    │    │    o         │  CLAUDE    │
 │   /|\        │ ─────────  │    │   /|\        │ ─────────  │
@@ -11,6 +11,14 @@ Running                          Idle
 │   \U/        │  session   │    │   \~~/  z Z  │  session   │
 │              │  RUN /     │    │              │  IDL ..    │
 └───────────────────────────┘    └───────────────────────────┘
+
+No active sessions
+┌───────────────────────────┐
+│                           │
+│          Claude           │
+│          Buddy            │
+│          ready            │
+└───────────────────────────┘
 ```
 
 ## How it works
@@ -118,15 +126,14 @@ Hardware: **D1 Mini (ESP8266)** + **SSD1306 128×64 OLED** (I2C, SDA=D2, SCL=D1)
 
 ### Display modes
 
-**No active Claude sessions** — 4-cell energy grid:
+**No active Claude sessions** — standby screen:
 ```
-┌─────────┬─────────┐
-│ Solar   │ House   │
-│  3.2k   │  1.1k   │
-├─────────┼─────────┤
-│ Grid    │ Batt    │
-│ < 450   │  87%    │
-└─────────┴─────────┘
+┌─────────────────────┐
+│                     │
+│       Claude        │
+│       Buddy         │
+│       ready         │
+└─────────────────────┘
 ```
 
 **Active Claude session** — full-screen mascot:

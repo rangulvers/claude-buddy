@@ -1,6 +1,6 @@
 esphome:
-  name: keller-test
-  friendly_name: House Energy Display
+  name: claude-buddy
+  friendly_name: Claude Buddy
 
 esp8266:
   board: d1_mini
@@ -16,11 +16,11 @@ ota:
     password: !secret esphome_ota_password
 
 wifi:
-  ssid: !secret wifi_ssid  # set in secrets.yaml
+  ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: none
   ap:
-    ssid: "Plant_Monitor_HotSpot"
+    ssid: "ClaudeBuddy"
     password: !secret esphome_ap_password
 
 captive_portal:
@@ -66,23 +66,6 @@ interval:
                           return true;
                         });
 
-sensor:
-  - platform: homeassistant
-    id: solar_power
-    entity_id: sensor.inverter_input_power
-
-  - platform: homeassistant
-    id: house_power
-    entity_id: sensor.house_consumption_power
-
-  - platform: homeassistant
-    id: grid_power_signed
-    entity_id: sensor.power_meter_active_power
-
-  - platform: homeassistant
-    id: battery_soc
-    entity_id: sensor.battery_state_of_capacity
-
 font:
   - file: "fonts/PixelOperator.ttf"
     id: font_medium
@@ -102,10 +85,9 @@ display:
       const int W = it.get_width();   // 128
       const int H = it.get_height();  // 64
       const int CW = W / 2;           // 64
-      const int CH = H / 2;           // 32
 
       if (id(g_sessions) > 0) {
-        // ── Full-screen Claude mode ──
+        // ── Active: mascot + status panel ──
         static uint8_t frame = 0;
         frame = (frame + 1) % 8;  // 8s cycle
         bool running = id(g_running);
@@ -123,11 +105,9 @@ display:
 
         // Eyebrows
         if (running) {
-          // Raised/arched — alert
           it.line(18, 20, 23, 18);
           it.line(41, 18, 46, 20);
         } else {
-          // Flat droopy — sleepy
           it.line(19, 23, 27, 23);
           it.line(37, 23, 45, 23);
         }
@@ -137,7 +117,7 @@ display:
           it.line(19, 27, 27, 27);
           it.line(37, 27, 45, 27);
         } else if (running) {
-          // Big eyes with pupils
+          // Big open eyes with pupils
           it.filled_circle(23, 27, 5);
           it.filled_circle(25, 29, 2, COLOR_OFF);
           it.filled_circle(41, 27, 5);
@@ -157,13 +137,12 @@ display:
           it.line(32, 45, 41, 43);
           it.line(41, 43, 44, 40);
         } else {
-          // Small resting smile
           it.line(24, 41, 28, 43);
           it.line(28, 43, 36, 43);
           it.line(36, 43, 40, 41);
         }
 
-        // Energy rays when running (pulse on even frames)
+        // Pulsing energy rays when running
         if (running && frame % 2 == 0) {
           it.line(11, 18, 6, 13);
           it.line(53, 18, 58, 13);
@@ -203,48 +182,8 @@ display:
         it.printf(96, 51, id(font_small), TextAlign::CENTER, "%s", anim);
 
       } else {
-        // ── Energy display (4 cells) ──
-
-        auto fmt_watts = [&](float w, char* buf, size_t n){
-          if (isnan(w)) { snprintf(buf, n, "--"); return; }
-          if (fabsf(w) >= 1000.0f) snprintf(buf, n, "%.1fk", w/1000.0f);
-          else snprintf(buf, n, "%.0f", w);
-        };
-        auto fmt_pct = [&](float p, char* buf, size_t n){
-          if (isnan(p)) { snprintf(buf, n, "--"); return; }
-          p = p < 0 ? 0 : (p > 100 ? 100 : p);
-          snprintf(buf, n, "%.0f%%", p);
-        };
-        auto draw_cell = [&](int col, int row, const char* label, const char* value){
-          int x0 = col * CW;
-          int y0 = row * CH;
-          it.printf(x0 + 2, y0 + 1, id(font_small), TextAlign::TOP_LEFT, "%s", label);
-          it.printf(x0 + CW/2, y0 + CH/2 + 4, id(font_medium), TextAlign::CENTER, "%s", value);
-        };
-
-        float solar = id(solar_power).state;
-        float house = id(house_power).state;
-        float grid_s = id(grid_power_signed).state;
-        float soc   = id(battery_soc).state;
-
-        char v1[12], v2[12], v3[16], v4[12];
-        fmt_watts(solar, v1, sizeof(v1));
-        fmt_watts(house, v2, sizeof(v2));
-
-        if (isnan(grid_s)) {
-          snprintf(v3, sizeof(v3), "--");
-        } else {
-          bool importing = (grid_s < 0.0f);
-          float mag = fabsf(grid_s);
-          char pwr[10];
-          fmt_watts(mag, pwr, sizeof(pwr));
-          snprintf(v3, sizeof(v3), "%s %s", importing ? ">" : "<", pwr);
-        }
-
-        fmt_pct(soc, v4, sizeof(v4));
-
-        draw_cell(0, 0, "Solar", v1);
-        draw_cell(1, 0, "House", v2);
-        draw_cell(0, 1, "Grid",  v3);
-        draw_cell(1, 1, "Batt",  v4);
+        // ── Standby: centered logo ──
+        it.printf(W / 2, 18, id(font_medium), TextAlign::CENTER, "Claude");
+        it.printf(W / 2, 36, id(font_medium), TextAlign::CENTER, "Buddy");
+        it.printf(W / 2, 54, id(font_small),  TextAlign::CENTER, "ready");
       }
