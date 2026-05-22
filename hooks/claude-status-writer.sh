@@ -13,14 +13,16 @@ TMP_FILE="/tmp/claude-status.json.tmp"
 # Parse stdin for msg
 STDIN_JSON=$(cat)
 MSG=""
+TOOL_NAME=""
 if [ "$EVENT" = "--event=prompt" ]; then
     MSG=$(echo "$STDIN_JSON" | python3 -c \
         "import sys,json; d=json.load(sys.stdin); p=d.get('prompt',''); print(p[:60].replace('\n',' '))" \
         2>/dev/null || true)
 elif [ "$EVENT" = "--event=tool" ]; then
-    MSG=$(echo "$STDIN_JSON" | python3 -c \
-        "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name','tool')[:60])" \
+    TOOL_NAME=$(echo "$STDIN_JSON" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name','')[:60])" \
         2>/dev/null || true)
+    MSG="$TOOL_NAME"
 fi
 
 # Count active claude tmux panes
@@ -56,6 +58,7 @@ d = {
     'running': $RUNNING,
     'waiting': $WAITING,
     'msg': $(echo "$MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))"),
+    'tool': $(echo "$TOOL_NAME" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))"),
     'tokens_today': $TOKENS_TODAY,
     'ts': $TS
 }

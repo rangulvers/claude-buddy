@@ -45,6 +45,10 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  - id: g_tool
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 interval:
   - interval: 3s
@@ -63,6 +67,7 @@ interval:
                         json::parse_json(body, [](JsonObject root) -> bool {
                           id(g_sessions) = root["sessions"].as<int>();
                           id(g_running) = root["running"].as<int>();
+                          id(g_tool)    = root["tool_type"].as<int>();
                           return true;
                         });
 
@@ -162,6 +167,8 @@ display:
         // Status panel (right half, centre x=96)
         static const char* spin[4] = {"|", "/", "-", "\\"};
         static const char* dots[4] = {" ", ".", "..", "..."};
+        // tool_type: 0=RUN 1=BASH 2=FILE 3=WEB 4=AGNT 5=PLAN
+        static const char* tool_labels[6] = {"RUN", "BASH", "FILE", "WEB", "AGNT", "PLAN"};
         uint8_t af = frame % 4;
 
         it.printf(96, 3,  id(font_small),  TextAlign::CENTER, "CLAUDE");
@@ -173,9 +180,11 @@ display:
         it.printf(96, 37, id(font_small),  TextAlign::CENTER,
                   id(g_sessions) == 1 ? "session" : "sessions");
 
-        char anim[10];
+        char anim[12];
         if (running) {
-          snprintf(anim, sizeof(anim), "RUN %s", spin[af]);
+          int t = id(g_tool);
+          const char* lbl = (t >= 0 && t <= 5) ? tool_labels[t] : "RUN";
+          snprintf(anim, sizeof(anim), "%s %s", lbl, spin[af]);
         } else {
           snprintf(anim, sizeof(anim), "IDL %s", dots[af]);
         }
