@@ -14,6 +14,7 @@ TMP_FILE="/tmp/claude-status.json.tmp"
 STDIN_JSON=$(cat)
 MSG=""
 TOOL_NAME=""
+NEW_TOKENS=0
 if [ "$EVENT" = "--event=prompt" ]; then
     MSG=$(echo "$STDIN_JSON" | python3 -c \
         "import sys,json; d=json.load(sys.stdin); p=d.get('prompt',''); print(p[:60].replace('\n',' '))" \
@@ -23,6 +24,10 @@ elif [ "$EVENT" = "--event=tool" ]; then
         "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name','')[:60])" \
         2>/dev/null || true)
     MSG="$TOOL_NAME"
+elif [ "$EVENT" = "--event=stop" ]; then
+    NEW_TOKENS=$(echo "$STDIN_JSON" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); u=d.get('usage',{}); print(u.get('input_tokens',0)+u.get('output_tokens',0))" \
+        2>/dev/null || echo 0)
 fi
 
 # Count active claude tmux panes
@@ -41,13 +46,14 @@ else
     MSG="Idle"
 fi
 
-# Tokens today: read from last status file to preserve across Stop events
+# Tokens today: accumulate; Stop event adds NEW_TOKENS to running total
 TOKENS_TODAY=0
 if [ -f "$STATUS_FILE" ]; then
     TOKENS_TODAY=$(python3 -c \
         "import json; d=json.load(open('$STATUS_FILE')); print(d.get('tokens_today',0))" \
         2>/dev/null || echo 0)
 fi
+TOKENS_TODAY=$(( TOKENS_TODAY + NEW_TOKENS ))
 
 TS=$(date +%s)
 
