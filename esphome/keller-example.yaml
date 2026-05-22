@@ -139,7 +139,10 @@ display:
         snprintf(lv_str, sizeof(lv_str), "LV %d", id(g_buddy_level));
         it.printf(64, 26, id(font_medium), TextAlign::CENTER, "%s", lv_str);
         it.printf(64, 46, id(font_small),  TextAlign::CENTER, "%s", id(g_buddy_name).c_str());
+        // Decrement here (not in interval) so each visible frame consumes one tick.
+        // display update_interval=1s so 4 ticks = ~4 seconds of splash.
         id(g_levelup_ticks)--;
+        // Screen was cleared by it.fill(COLOR_OFF) above; early return is safe.
         return;
       }
 
@@ -158,7 +161,9 @@ display:
         it.printf(64, 24, id(font_medium), TextAlign::CENTER, "%s!", id(g_buddy_name).c_str());
         if (bt >= 0 && bt <= 9)
           it.printf(64, 46, id(font_small), TextAlign::CENTER, "%s %s", rarities[bt], type_names[bt]);
+        // Decrement here so each displayed frame consumes one tick (1s per tick).
         id(g_splash_ticks)--;
+        // Screen was cleared by it.fill(COLOR_OFF) above; early return is safe.
         return;
       }
 
@@ -173,7 +178,8 @@ display:
 
         switch (bt) {
 
-          case 0: default: {
+          default: // unknown type falls through to BOT rendering
+          case 0: {
             // BOT — round head, antenna, circular eyes
             it.circle(32, 33, 22);
             it.line(32, 11, 32, 4);
@@ -436,8 +442,8 @@ display:
         it.printf(96, 3,  id(font_small),  TextAlign::CENTER, "CLAUDE");
         it.line(66, 15, 126, 15);
 
-        // Big session count
-        char sess_str[4];
+        // Big session count — [8] handles up to 7-digit values safely
+        char sess_str[8];
         snprintf(sess_str, sizeof(sess_str), "%d", id(g_sessions));
         it.printf(96, 23, id(font_medium), TextAlign::CENTER, "%s", sess_str);
 

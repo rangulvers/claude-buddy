@@ -1,6 +1,11 @@
+import fcntl
 import json
+import logging
 import os
 import random
+import re
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -8,7 +13,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger("claude-buddy")
 
 STATUS_FILE  = Path("/tmp/claude-status.json")
 BUDDIES_FILE = Path.home() / ".claude-buddy" / "buddies.json"
@@ -17,6 +24,15 @@ BUDDIES_FILE.parent.mkdir(exist_ok=True)
 STALE_AFTER  = 300
 ADMIN_TOKEN  = os.environ.get("BUDDY_ADMIN_TOKEN", "buddy-admin-changeme")
 TOKENS_PER_LEVEL = 50_000
+
+# Warn operators who are running with the default insecure token.
+if ADMIN_TOKEN == "buddy-admin-changeme":
+    print(
+        "WARNING: BUDDY_ADMIN_TOKEN is set to the default value 'buddy-admin-changeme'. "
+        "Set the BUDDY_ADMIN_TOKEN environment variable to a strong secret before exposing "
+        "this server outside your local machine.",
+        file=sys.stderr,
+    )
 
 BUDDY_TYPES    = ["BOT","CAT","OWL","GHOST","ALIEN","BEAR","FOX","DRAGON","BUNNY","CRYSTAL"]
 BUDDY_RARITIES = ["Common","Common","Uncommon","Rare","Epic","Common","Rare","Legendary","Uncommon","Mystical"]
@@ -54,8 +70,16 @@ TOOL_TYPES = {
     "TodoWrite": 5, "TaskCreate": 5, "TaskUpdate": 5, "TaskGet": 5, "TaskList": 5,
 }
 
+# Allowed characters for buddy names assigned via the admin API.
+_BUDDY_NAME_RE = re.compile(r'^[A-Za-z0-9 _\-]+$')
+
 app = FastAPI(title="Claude Buddy Server")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 security = HTTPBearer()
 
 _default = {
@@ -68,16 +92,57 @@ _default = {
 
 
 def load_buddies() -> dict:
-    if BUDDIES_FILE.exists():
-        try:
-            return json.loads(BUDDIES_FILE.read_text())
-        except Exception:
-            pass
-    return {}
+    """Load buddies.json under an advisory read lock.
+
+    If the file is missing, returns {}.
+    If the file is present but unreadable or contains invalid JSON, logs the
+    error at WARNING level and returns {} rather than silently swallowing the
+    problem.
+    """
+    if not BUDDIES_FILE.exists():
+        return {}
+    try:
+        with BUDDIES_FILE.open("r") as fh:
+            fcntl.flock(fh, fcntl.LOCK_SH)
+            try:
+                return json.load(fh)
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    except json.JSONDecodeError as exc:
+        logger.warning("buddies.json is corrupt (%s); returning empty dict. "
+                       "Inspect %s before next write.", exc, BUDDIES_FILE)
+        return {}
+    except OSError as exc:
+        logger.warning("Could not read buddies.json: %s", exc)
+        return {}
 
 
 def save_buddies(data: dict):
-    BUDDIES_FILE.write_text(json.dumps(data, indent=2))
+    """Write buddies.json atomically under an advisory write lock.
+
+    Writes to a sibling temp file first, then uses os.replace() so the live
+    file is never in a partially-written state.  An exclusive fcntl lock on
+    the temp file serialises concurrent writers.
+    """
+    dir_ = BUDDIES_FILE.parent
+    fd, tmp_path = tempfile.mkstemp(dir=dir_, prefix=".buddies-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                json.dump(data, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+        os.replace(tmp_path, BUDDIES_FILE)
+    except Exception:
+        # Clean up the temp file if anything went wrong before the rename.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def roll_buddy() -> tuple[int, str]:
@@ -86,6 +151,19 @@ def roll_buddy() -> tuple[int, str]:
         if roll < upper:
             return type_id, random.choice(BUDDY_NAMES[type_id])
     return 9, random.choice(BUDDY_NAMES[9])
+
+
+def _sanitise_tokens_today(raw) -> int:
+    """Return a non-negative integer from whatever tokens_today the status file
+    contains.  Rejects floats, strings, negatives, and None."""
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        logger.warning("tokens_today has unexpected type %s (%r); treating as 0",
+                       type(raw).__name__, raw)
+        return 0
+    if raw < 0:
+        logger.warning("tokens_today is negative (%d); treating as 0", raw)
+        return 0
+    return raw
 
 
 def get_or_assign(device_id: str, tokens_today: int = 0) -> tuple[dict, bool]:
@@ -142,7 +220,8 @@ def status(device_id: str = ""):
     except Exception:
         data = dict(_default)
 
-    tokens_today = data.get("tokens_today", 0)
+    raw_tokens = data.get("tokens_today", 0)
+    tokens_today = _sanitise_tokens_today(raw_tokens)
 
     buddy, levelup = None, False
     if device_id:
@@ -175,15 +254,33 @@ def status(device_id: str = ""):
 
 
 class AssignRequest(BaseModel):
-    device_id:  str
+    device_id:  str = Field(..., max_length=64)
     buddy_type: int
-    buddy_name: str
+    buddy_name: str = Field(..., min_length=1, max_length=32)
+
+    @field_validator("buddy_name")
+    @classmethod
+    def name_safe_chars(cls, v: str) -> str:
+        if not _BUDDY_NAME_RE.match(v):
+            raise ValueError(
+                "buddy_name may only contain letters, digits, spaces, hyphens, and underscores"
+            )
+        return v
+
+    @field_validator("device_id")
+    @classmethod
+    def device_id_safe_chars(cls, v: str) -> str:
+        if not re.match(r'^[A-Za-z0-9_\-:.]+$', v):
+            raise ValueError(
+                "device_id may only contain letters, digits, underscores, hyphens, colons, and dots"
+            )
+        return v
 
 
 @app.post("/admin/assign", dependencies=[Depends(require_admin)])
 def admin_assign(req: AssignRequest):
     if req.buddy_type < 0 or req.buddy_type > 9:
-        raise HTTPException(status_code=400, detail="buddy_type must be 0–9")
+        raise HTTPException(status_code=400, detail="buddy_type must be 0-9")
     buddies = load_buddies()
     prev = buddies.get(req.device_id, {})
     buddies[req.device_id] = {
